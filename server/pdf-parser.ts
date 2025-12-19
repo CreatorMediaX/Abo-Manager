@@ -1,4 +1,8 @@
-import * as pdfParse from 'pdf-parse';
+// Use dynamic import for pdf-parse due to ESM/CJS compatibility
+let pdfParse: any;
+(async () => {
+  pdfParse = (await import('pdf-parse')).default;
+})();
 
 export interface ExtractedTransaction {
   date: string;
@@ -133,7 +137,11 @@ function normalizeDate(dateStr: string): string {
 // Parse PDF buffer
 export async function parsePDFBuffer(buffer: Buffer): Promise<{ text: string; numPages: number }> {
   try {
-    const data = await pdfParse(buffer);
+    // Dynamically import pdf-parse to handle ESM/CJS compatibility
+    const pdfParseModule = await import('pdf-parse');
+    const parse = pdfParseModule.default || pdfParseModule;
+    
+    const data = await parse(buffer);
     return {
       text: data.text,
       numPages: data.numpages,

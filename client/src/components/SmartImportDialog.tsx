@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Upload, FileUp, Sparkles, CheckCircle2, AlertCircle, X, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Upload, FileUp, Sparkles, CheckCircle2, AlertCircle, X, FileText, FileSpreadsheet } from "lucide-react";
 import { useState, useCallback } from "react";
 import Papa from "papaparse";
 import { 
@@ -19,6 +20,7 @@ import {
   type ParsedTransaction,
   type SubscriptionCandidate
 } from "@/lib/importer";
+import { parsePDFFile } from "@/lib/pdf-extractor";
 import { toast } from "@/hooks/use-toast";
 
 export function SmartImportDialog() {
@@ -28,6 +30,7 @@ export function SmartImportDialog() {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<'upload' | 'mapping' | 'preview' | 'results'>('upload');
   const [fileName, setFileName] = useState('');
+  const [fileType, setFileType] = useState<'csv' | 'pdf'>('csv');
   const [csvData, setCsvData] = useState<any[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [columnMapping, setColumnMapping] = useState<{
@@ -41,10 +44,13 @@ export function SmartImportDialog() {
   const [selectedCandidates, setSelectedCandidates] = useState<number[]>([]);
   const [ignoredCandidates, setIgnoredCandidates] = useState<number[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isPDFScanned, setIsPDFScanned] = useState(false);
+  const [pdfRawText, setPdfRawText] = useState('');
 
   const reset = () => {
     setStep('upload');
     setFileName('');
+    setFileType('csv');
     setCsvData([]);
     setHeaders([]);
     setColumnMapping({});
@@ -52,52 +58,129 @@ export function SmartImportDialog() {
     setCandidates([]);
     setSelectedCandidates([]);
     setIgnoredCandidates([]);
+    setIsPDFScanned(false);
+    setPdfRawText('');
   };
 
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setFileName(file.name);
     setIsAnalyzing(true);
     
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        if (results.data.length === 0) {
-          toast({ title: "Empty file", description: "The CSV file contains no data.", variant: "destructive" });
+    // Determine file type
+    const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    setFileType(isPDF ? 'pdf' : 'csv');
+    
+    if (isPDF) {
+      // Handle PDF upload
+      try {
+        const result = await parsePDFFile(file);
+        
+        if (result.isScanned) {
+          setIsPDFScanned(true);
+          setPdfRawText(result.rawText);
+          toast({ 
+            title: "Scanned PDF detected", 
+            description: "This appears to be a scanned document. Text extraction may be limited. Try using a digital bank statement export.",
+            variant: "destructive" 
+          });
           setIsAnalyzing(false);
           return;
         }
         
-        const headers = results.meta.fields || [];
-        setHeaders(headers);
-        setCsvData(results.data);
-        
-        // Auto-detect columns
-        const detected = detectColumns(headers);
-        setColumnMapping(detected);
-        
-        // If all required columns detected, proceed to preview
-        if (detected.date && detected.description && detected.amount) {
-          setStep('preview');
-        } else {
-          setStep('mapping');
+        if (result.transactions.length === 0) {
+          toast({ 
+            title: "No transactions found", 
+            description: "Could not detect any transactions in this PDF. Please ensure it's a bank statement or transaction export.",
+            variant: "destructive" 
+          });
+          setIsAnalyzing(false);
+          return;
         }
         
-        setIsAnalyzing(false);
-      },
-      error: (error) => {
+        // Convert PDF transactions to ParsedTransaction format
+        const parsed: ParsedTransaction[] = result.transactions.map(tx => ({
+          date: tx.date,
+          description: tx.description,
+          amount: tx.amount,
+          currency: tx.currency,
+          raw: tx.raw,
+        }));
+        
+        setTransactions(parsed);
+        
+        // Automatically analyze PDF transactions
+        setTimeout(() => {
+          const found = analyzeImportedTransactions(parsed, subscriptions);
+          setCandidates(found);
+          setSelectedCandidates(found.map((_, i) => i));
+          setIgnoredCandidates([]);
+          setStep('results');
+          setIsAnalyzing(false);
+          
+          if (found.length === 0) {
+            toast({ 
+              title: "No subscriptions detected", 
+              description: `Analyzed ${parsed.length} transactions but couldn't find recurring patterns.`,
+            });
+          } else {
+            toast({
+              title: `Found ${found.length} potential subscriptions`,
+              description: `From ${parsed.length} transactions. Review and import.`,
+            });
+          }
+        }, 1000);
+        
+      } catch (error: any) {
         setIsAnalyzing(false);
         toast({ 
-          title: "Error parsing file", 
-          description: error.message || "Could not parse CSV file",
+          title: "PDF parsing failed", 
+          description: error.message || "Could not parse PDF file. Ensure it's a valid bank statement.",
           variant: "destructive" 
         });
       }
-    });
-  }, []);
+    } else {
+      // Handle CSV upload
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          if (results.data.length === 0) {
+            toast({ title: "Empty file", description: "The CSV file contains no data.", variant: "destructive" });
+            setIsAnalyzing(false);
+            return;
+          }
+          
+          const headers = results.meta.fields || [];
+          setHeaders(headers);
+          setCsvData(results.data);
+          
+          // Auto-detect columns
+          const detected = detectColumns(headers);
+          setColumnMapping(detected);
+          
+          // If all required columns detected, proceed to preview
+          if (detected.date && detected.description && detected.amount) {
+            setStep('preview');
+          } else {
+            setStep('mapping');
+          }
+          
+          setIsAnalyzing(false);
+        },
+        error: (error) => {
+          setIsAnalyzing(false);
+          toast({ 
+            title: "Error parsing file", 
+            description: error.message || "Could not parse CSV file",
+            variant: "destructive" 
+          });
+        }
+      });
+    }
+  }, [subscriptions]);
 
   const handleAnalyze = useCallback(() => {
     setIsAnalyzing(true);
@@ -224,9 +307,9 @@ export function SmartImportDialog() {
         {step === 'upload' && (
           <>
             <DialogHeader>
-              <DialogTitle>Smart CSV Import</DialogTitle>
+              <DialogTitle>Smart Import</DialogTitle>
               <DialogDescription>
-                Upload a CSV export from your bank, PayPal, or financial app. We'll detect recurring subscriptions automatically.
+                Upload a CSV or PDF export from your bank, PayPal, or financial app. We'll detect recurring subscriptions automatically.
               </DialogDescription>
             </DialogHeader>
             
@@ -242,19 +325,22 @@ export function SmartImportDialog() {
                       </div>
                     ) : (
                       <>
-                        <FileUp className="h-10 w-10 mb-3 text-muted-foreground" />
+                        <div className="flex gap-4 mb-3">
+                          <FileSpreadsheet className="h-10 w-10 text-muted-foreground" />
+                          <FileText className="h-10 w-10 text-muted-foreground" />
+                        </div>
                         <p className="text-sm font-medium mb-1">Click to upload or drag and drop</p>
-                        <p className="text-xs text-muted-foreground">CSV files only</p>
+                        <p className="text-xs text-muted-foreground">CSV or PDF bank statements</p>
                       </>
                     )}
                   </div>
                   <Input 
                     type="file" 
                     className="hidden" 
-                    accept=".csv" 
+                    accept=".csv,.pdf,application/pdf" 
                     onChange={handleFileUpload} 
                     disabled={isAnalyzing}
-                    data-testid="input-csv-file"
+                    data-testid="input-file-upload"
                   />
                 </label>
               </div>
