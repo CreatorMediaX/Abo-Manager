@@ -1,9 +1,3 @@
-// Use dynamic import for pdf-parse due to ESM/CJS compatibility
-let pdfParse: any;
-(async () => {
-  pdfParse = (await import('pdf-parse')).default;
-})();
-
 export interface ExtractedTransaction {
   date: string;
   description: string;
@@ -17,20 +11,19 @@ export function extractTransactionsFromPDFText(text: string): ExtractedTransacti
   const transactions: ExtractedTransaction[] = [];
   const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
   
-  // Common date patterns
+  // Common date patterns (German format DD.MM.YYYY)
   const datePatterns = [
+    /\b(\d{1,2})[.\s]+(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+(\d{4})\b/gi,
     /\b(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})\b/g,  // DD.MM.YYYY, DD/MM/YYYY
     /\b(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})\b/g,     // YYYY-MM-DD
   ];
   
-  // Amount patterns (EUR, USD, GBP with various formats)
+  // Amount patterns (EUR with German formatting: 1.234,56 or 22,50)
   const amountPatterns = [
-    /(-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*(?:EUR|€)/gi,
-    /(?:EUR|€)\s*(-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/gi,
-    /(-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*(?:USD|\$)/gi,
-    /(?:USD|\$)\s*(-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/gi,
-    /(-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*(?:GBP|£)/gi,
-    /(?:GBP|£)\s*(-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/gi,
+    /(\d{1,3}(?:\.\d{3})*,\d{2})\s*(?:EUR|€)/gi,  // German: 1.234,56 EUR
+    /(?:EUR|€)\s*(\d{1,3}(?:\.\d{3})*,\d{2})/gi,  // EUR 1.234,56
+    /(\d{1,3}(?:,\d{3})*\.\d{2})\s*(?:USD|\$)/gi,  // US: 1,234.56 USD
+    /(?:USD|\$)\s*(\d{1,3}(?:,\d{3})*\.\d{2})/gi,
   ];
   
   // Try to detect table-like structures
@@ -56,7 +49,10 @@ export function extractTransactionsFromPDFText(text: string): ExtractedTransacti
     for (const pattern of amountPatterns) {
       const match = line.match(pattern);
       if (match) {
-        const amountStr = match[0].replace(/[^\d.,-]/g, '').replace(',', '.');
+        // Extract just the number part
+        let amountStr = match[1] || match[0];
+        // Convert German format (1.234,56) to standard (1234.56)
+        amountStr = amountStr.replace(/\./g, '').replace(',', '.');
         foundAmount = parseFloat(amountStr);
         
         // Detect currency
@@ -71,23 +67,30 @@ export function extractTransactionsFromPDFText(text: string): ExtractedTransacti
     
     if (!foundAmount || isNaN(foundAmount)) continue;
     
-    // Extract description (everything between date and amount)
+    // Extract description (look for merchant name)
     let description = line;
     
     // Remove date
+    description = description.replace(/\b\d{1,2}[.\s]+(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+\d{4}\b/gi, '');
     description = description.replace(/\b\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}\b/g, '');
     description = description.replace(/\b\d{4}[.\/-]\d{1,2}[.\/-]\d{1,2}\b/g, '');
     
     // Remove amount
-    description = description.replace(/[-]?\d{1,3}(?:[.,]\d{3})*[.,]\d{2}/g, '');
+    description = description.replace(/\d{1,3}(?:[.,]\d{3})*[.,]\d{2}/g, '');
     description = description.replace(/EUR|€|USD|\$|GBP|£|CHF/gi, '');
     
     description = description.trim();
     
     if (!description) {
-      // Try to get description from next line
-      if (i + 1 < lines.length) {
-        description = lines[i + 1];
+      // Try to find merchant name in surrounding lines
+      const prevLine = i > 0 ? lines[i - 1] : '';
+      const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
+      
+      // Look for common merchant indicators
+      if (prevLine.match(/\b(invoice|rechnung|bill|from|von)\b/i)) {
+        description = prevLine.replace(/\b(invoice|rechnung|bill|from|von)\b/gi, '').trim();
+      } else if (nextLine.match(/\b(total|gesamt|summe)\b/i)) {
+        description = prevLine.trim();
       }
     }
     
@@ -107,7 +110,22 @@ export function extractTransactionsFromPDFText(text: string): ExtractedTransacti
 
 // Normalize date to YYYY-MM-DD
 function normalizeDate(dateStr: string): string {
-  // Try different formats
+  const monthNames: Record<string, string> = {
+    'januar': '01', 'februar': '02', 'märz': '03', 'april': '04',
+    'mai': '05', 'juni': '06', 'juli': '07', 'august': '08',
+    'september': '09', 'oktober': '10', 'november': '11', 'dezember': '12'
+  };
+  
+  // Try German date format: 19. Dezember 2025
+  const germanMatch = dateStr.match(/(\d{1,2})[.\s]+(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+(\d{4})/i);
+  if (germanMatch) {
+    const day = germanMatch[1].padStart(2, '0');
+    const month = monthNames[germanMatch[2].toLowerCase()];
+    const year = germanMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+  
+  // Try different numeric formats
   const patterns = [
     { regex: /^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$/, format: 'DD.MM.YYYY' },
     { regex: /^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2})$/, format: 'DD.MM.YY' },
@@ -134,19 +152,22 @@ function normalizeDate(dateStr: string): string {
   return dateStr;
 }
 
-// Parse PDF buffer
+// Parse PDF buffer - FIXED to use correct pdf-parse API
 export async function parsePDFBuffer(buffer: Buffer): Promise<{ text: string; numPages: number }> {
   try {
-    // Dynamically import pdf-parse to handle ESM/CJS compatibility
+    // Dynamically import pdf-parse - it exports PDFParse as a named export
     const pdfParseModule = await import('pdf-parse');
-    const parse = pdfParseModule.default || pdfParseModule;
+    const PDFParse = pdfParseModule.PDFParse;
     
-    const data = await parse(buffer);
+    // PDFParse is a function that takes the buffer
+    const data = await PDFParse(buffer);
+    
     return {
       text: data.text,
       numPages: data.numpages,
     };
   } catch (error: any) {
+    console.error('[DEV] PDF parsing error details:', error);
     throw new Error(`PDF parsing failed: ${error.message}`);
   }
 }
