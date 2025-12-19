@@ -152,19 +152,86 @@ function normalizeDate(dateStr: string): string {
   return dateStr;
 }
 
-// Parse PDF buffer - FIXED to use correct pdf-parse API
+// Parse PDF buffer with robust compatibility wrapper
 export async function parsePDFBuffer(buffer: Buffer): Promise<{ text: string; numPages: number }> {
   try {
-    // Dynamically import pdf-parse - it exports PDFParse as a named export
+    // Dynamically import pdf-parse module
+    // @ts-ignore - Dynamic module with varying exports
     const pdfParseModule = await import('pdf-parse');
-    const PDFParse = pdfParseModule.PDFParse;
     
-    // PDFParse is a function that takes the buffer
-    const data = await PDFParse(buffer);
+    // Try different export possibilities for compatibility
+    let parseFunction: any = null;
+    
+    // Option 1: Try default export (most common)
+    // @ts-ignore
+    if (pdfParseModule.default && typeof pdfParseModule.default === 'function') {
+      // @ts-ignore
+      parseFunction = pdfParseModule.default;
+      console.log('[DEV] Using default export');
+    }
+    // Option 2: Try named PDFParse export
+    else if (pdfParseModule.PDFParse) {
+      const PDFParse: any = pdfParseModule.PDFParse;
+      
+      // Check if it's a class that needs instantiation
+      if (PDFParse.toString().startsWith('class')) {
+        console.log('[DEV] PDFParse is a class, instantiating...');
+        
+        // Try instantiation with different argument patterns
+        let parser: any;
+        try {
+          parser = new PDFParse(buffer);
+        } catch {
+          try {
+            parser = new PDFParse({});
+          } catch {
+            parser = new PDFParse();
+          }
+        }
+        
+        // Look for parse method
+        if (typeof parser.parse === 'function') {
+          parseFunction = (buf: Buffer) => parser.parse(buf);
+        } else if (typeof parser.parseBuffer === 'function') {
+          parseFunction = (buf: Buffer) => parser.parseBuffer(buf);
+        } else if (typeof parser.getText === 'function') {
+          parseFunction = async (buf: Buffer) => {
+            const text = await parser.getText(buf);
+            return { text, numpages: 1 };
+          };
+        } else {
+          console.log('[DEV] Parser methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(parser)));
+          throw new Error('PDFParse class has no known parse method');
+        }
+      }
+      // Or if it's already a function
+      else if (typeof PDFParse === 'function') {
+        parseFunction = PDFParse;
+      }
+    }
+    // Option 3: Try any other exported function
+    else {
+      for (const key of Object.keys(pdfParseModule)) {
+        const exported = (pdfParseModule as any)[key];
+        if (typeof exported === 'function' && key.toLowerCase().includes('parse')) {
+          parseFunction = exported;
+          console.log(`[DEV] Using export: ${key}`);
+          break;
+        }
+      }
+    }
+    
+    if (!parseFunction) {
+      console.error('[DEV] Available exports:', Object.keys(pdfParseModule));
+      throw new Error('Could not find PDF parsing function in module');
+    }
+    
+    // Parse the buffer
+    const data = await parseFunction(buffer);
     
     return {
-      text: data.text,
-      numPages: data.numpages,
+      text: data.text || data.Text || '',
+      numPages: data.numpages || data.numPages || data.Pages || 1,
     };
   } catch (error: any) {
     console.error('[DEV] PDF parsing error details:', error);
