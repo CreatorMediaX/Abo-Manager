@@ -316,6 +316,8 @@ export async function registerRoutes(
       
       // Parse PDF
       const pdfData = await parsePDFBuffer(req.file.buffer);
+      console.log("[DEV] pdfData.text type:", typeof pdfData.text, "Length:", pdfData.text?.length || 0);
+      
       const scanned = isScannedPDF(pdfData.text, pdfData.numPages);
       
       if (scanned) {
@@ -329,7 +331,7 @@ export async function registerRoutes(
         });
       }
       
-      // Extract transactions from text
+      // Extract transactions from text - pass the text directly
       const transactions = extractTransactionsFromPDFText(pdfData.text);
       
       console.log("[DEV] Extracted", transactions.length, "transactions from PDF");

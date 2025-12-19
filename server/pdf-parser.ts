@@ -7,7 +7,31 @@ export interface ExtractedTransaction {
 }
 
 // Extract transactions from PDF text
-export function extractTransactionsFromPDFText(text: string): ExtractedTransaction[] {
+export function extractTransactionsFromPDFText(input: any): ExtractedTransaction[] {
+  // Normalize input to string (handle objects, arrays, or primitives)
+  let text: string;
+  
+  if (typeof input === 'string') {
+    text = input;
+  } else if (input && typeof input === 'object') {
+    // If it's an object with .text property, use that
+    if (typeof input.text === 'string') {
+      text = input.text;
+    } else if (typeof input.Text === 'string') {
+      text = input.Text;
+    } else if (Array.isArray(input)) {
+      text = input.join('\n');
+    } else {
+      // Try to stringify the object
+      text = JSON.stringify(input);
+    }
+  } else {
+    // Convert primitives to string
+    text = String(input || '');
+  }
+  
+  console.log('[DEV] extractTransactionsFromPDFText input type:', typeof input, 'Normalized to string length:', text.length);
+  
   const transactions: ExtractedTransaction[] = [];
   const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
   
@@ -238,9 +262,26 @@ export async function parsePDFBuffer(buffer: Buffer): Promise<{ text: string; nu
     console.log('[DEV] Calling parse function with Uint8Array...');
     const data = await parseFunction(uint8Array);
     
+    // Log what we got back for debugging
+    console.log('[DEV] Parse result type:', typeof data, 'Keys:', data ? Object.keys(data).join(', ') : 'null');
+    
+    // Normalize the result to ensure we return a plain string
+    let text: string = '';
+    if (typeof data === 'string') {
+      text = data;
+    } else if (data && typeof data === 'object') {
+      text = data.text || data.Text || data.content || '';
+    }
+    
+    const numPages = data && typeof data === 'object' 
+      ? (data.numpages || data.numPages || data.Pages || 1)
+      : 1;
+    
+    console.log('[DEV] Extracted text length:', text.length, 'characters, Pages:', numPages);
+    
     return {
-      text: data.text || data.Text || '',
-      numPages: data.numpages || data.numPages || data.Pages || 1,
+      text,
+      numPages,
     };
   } catch (error: any) {
     console.error('[DEV] PDF parsing error details:', error);
