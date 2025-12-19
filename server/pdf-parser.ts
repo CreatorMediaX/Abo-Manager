@@ -155,6 +155,14 @@ function normalizeDate(dateStr: string): string {
 // Parse PDF buffer with robust compatibility wrapper
 export async function parsePDFBuffer(buffer: Buffer): Promise<{ text: string; numPages: number }> {
   try {
+    // Log input type for debugging
+    console.log('[DEV] PDF parser input type:', buffer.constructor.name, 'Size:', buffer.length, 'bytes');
+    
+    // Convert Buffer to Uint8Array for pdfjs compatibility
+    // pdfjs requires Uint8Array, not Node.js Buffer
+    const uint8Array = new Uint8Array(buffer);
+    console.log('[DEV] Converted to Uint8Array for pdfjs');
+    
     // Dynamically import pdf-parse module
     // @ts-ignore - Dynamic module with varying exports
     const pdfParseModule = await import('pdf-parse');
@@ -180,7 +188,7 @@ export async function parsePDFBuffer(buffer: Buffer): Promise<{ text: string; nu
         // Try instantiation with different argument patterns
         let parser: any;
         try {
-          parser = new PDFParse(buffer);
+          parser = new PDFParse(uint8Array);
         } catch {
           try {
             parser = new PDFParse({});
@@ -191,12 +199,12 @@ export async function parsePDFBuffer(buffer: Buffer): Promise<{ text: string; nu
         
         // Look for parse method
         if (typeof parser.parse === 'function') {
-          parseFunction = (buf: Buffer) => parser.parse(buf);
+          parseFunction = (data: Uint8Array) => parser.parse(data);
         } else if (typeof parser.parseBuffer === 'function') {
-          parseFunction = (buf: Buffer) => parser.parseBuffer(buf);
+          parseFunction = (data: Uint8Array) => parser.parseBuffer(data);
         } else if (typeof parser.getText === 'function') {
-          parseFunction = async (buf: Buffer) => {
-            const text = await parser.getText(buf);
+          parseFunction = async (data: Uint8Array) => {
+            const text = await parser.getText(data);
             return { text, numpages: 1 };
           };
         } else {
@@ -226,8 +234,9 @@ export async function parsePDFBuffer(buffer: Buffer): Promise<{ text: string; nu
       throw new Error('Could not find PDF parsing function in module');
     }
     
-    // Parse the buffer
-    const data = await parseFunction(buffer);
+    // Parse the Uint8Array (not Buffer - pdfjs requires Uint8Array)
+    console.log('[DEV] Calling parse function with Uint8Array...');
+    const data = await parseFunction(uint8Array);
     
     return {
       text: data.text || data.Text || '',
