@@ -30,11 +30,11 @@ export default function AuthPage() {
   });
 
   const onLogin = async (data: z.infer<typeof authSchema>) => {
-    await login(data.email);
+    await login(data.email, data.password);
   };
 
   const onRegister = async (data: z.infer<typeof authSchema>) => {
-    await register(data.email, data.name || "User");
+    await register(data.email, data.name || "User", data.password);
   };
 
   return (

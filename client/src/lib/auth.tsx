@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useLocation } from "wouter";
 import { toast } from "@/hooks/use-toast";
+import { api } from "./api";
 
 interface User {
   id: string;
@@ -11,9 +12,9 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  login: (email: string) => Promise<void>;
-  register: (email: string, name: string) => Promise<void>;
-  logout: () => void;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, name: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -24,61 +25,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    // Simulate checking session
-    const storedUser = localStorage.getItem("subcontrol_user_session");
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-    setIsLoading(false);
+    // Check session on mount
+    api.me().then(user => {
+      if (user) setUser(user);
+    }).finally(() => {
+      setIsLoading(false);
+    });
   }, []);
 
-  const login = async (email: string) => {
-    // Mock login - in a real app this would hit the API
+  const login = async (email: string, password: string) => {
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 800)); // Fake network delay
-    
-    // For demo purposes, we'll just create a session for this email
-    // In a real app, we'd verify password hash
-    const mockUser = {
-      id: btoa(email), // Simple fake ID
-      email,
-      name: email.split("@")[0],
-    };
-    
-    setUser(mockUser);
-    localStorage.setItem("subcontrol_user_session", JSON.stringify(mockUser));
-    setIsLoading(false);
-    toast({
-      title: "Welcome back!",
-      description: "You have successfully logged in.",
-    });
-    setLocation("/");
+    try {
+      const data = await api.login(email, password);
+      setUser(data.user);
+      toast({
+        title: "Welcome back!",
+        description: "You have successfully logged in.",
+      });
+      setLocation("/");
+    } catch (error: any) {
+      toast({
+        title: "Login failed",
+        description: error.message,
+        variant: "destructive",
+      });
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const register = async (email: string, name: string) => {
-    // Mock register
+  const register = async (email: string, name: string, password: string) => {
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    const newUser = {
-      id: btoa(email),
-      email,
-      name,
-    };
-    
-    setUser(newUser);
-    localStorage.setItem("subcontrol_user_session", JSON.stringify(newUser));
-    setIsLoading(false);
-    toast({
-      title: "Account created",
-      description: "Welcome to SubControl!",
-    });
-    setLocation("/");
+    try {
+      const data = await api.register(email, name, password);
+      setUser(data.user);
+      toast({
+        title: "Account created",
+        description: "Welcome to SubControl!",
+      });
+      setLocation("/");
+    } catch (error: any) {
+      toast({
+        title: "Registration failed",
+        description: error.message,
+        variant: "destructive",
+      });
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await api.logout();
     setUser(null);
-    localStorage.removeItem("subcontrol_user_session");
     toast({
       title: "Logged out",
       description: "See you next time.",

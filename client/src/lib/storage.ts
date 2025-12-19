@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { Subscription } from "./types";
 import { toast } from "@/hooks/use-toast";
-import Papa from "papaparse";
 import { useAuth } from "@/lib/auth";
-import { LocalApi, RemoteApi } from "@/lib/api-adapter";
+import { api } from "@/lib/api";
+import { LocalApi } from "@/lib/api-adapter";
 
 export function useSubscriptions() {
   const { user } = useAuth();
@@ -18,21 +18,17 @@ export function useSubscriptions() {
     setError(null);
     try {
       if (user) {
-        // REMOTE MODE
-        const response = await RemoteApi.list(user.id);
-        if (response.status === "success" && response.data) {
-          setSubscriptions(response.data);
-        } else {
-          setError(response.error || "Failed to fetch from server");
-        }
+        // REMOTE MODE - Real API
+        const data = await api.getSubscriptions();
+        setSubscriptions(data);
       } else {
-        // LOCAL MODE
+        // LOCAL MODE - Guest/Offline
         const localData = LocalApi.list();
         setSubscriptions(localData);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Fetch error:", e);
-      setError("Network error occurred");
+      setError(e.message || "Network error occurred");
     } finally {
       setLoading(false);
     }
@@ -45,25 +41,24 @@ export function useSubscriptions() {
 
   // ACTIONS
   const addSubscription = async (sub: Omit<Subscription, "id">) => {
-    const newSub: Subscription = { ...sub, id: crypto.randomUUID() };
-    
     // Optimistic UI Update
+    const tempId = crypto.randomUUID();
+    const newSub: Subscription = { ...sub, id: tempId } as Subscription;
     const prevSubs = [...subscriptions];
     setSubscriptions(prev => [...prev, newSub]);
 
     try {
       if (user) {
-        const res = await RemoteApi.create(user.id, newSub);
-        if (res.status === "error") throw new Error(res.error);
-        toast({ title: "Saved to Cloud", description: "Subscription secure." });
+        const created = await api.createSubscription(sub);
+        setSubscriptions(prev => prev.map(s => s.id === tempId ? created : s));
+        toast({ title: "Saved to Cloud", description: "Subscription secured." });
       } else {
         LocalApi.create(newSub);
-        toast({ title: "Saved Locally", description: "Login to sync." });
+        toast({ title: "Saved Locally", description: "Login to sync across devices." });
       }
-    } catch (e) {
-      // Revert optimistic update
+    } catch (e: any) {
       setSubscriptions(prevSubs);
-      toast({ title: "Save Failed", description: "Could not save subscription.", variant: "destructive" });
+      toast({ title: "Save Failed", description: e.message, variant: "destructive" });
     }
   };
 
@@ -73,41 +68,35 @@ export function useSubscriptions() {
     if (!target) return;
 
     const updatedSub = { ...target, ...updates };
-
-    // Optimistic Update
     setSubscriptions(prev => prev.map(s => s.id === id ? updatedSub : s));
 
     try {
       if (user) {
-        const res = await RemoteApi.update(user.id, updatedSub);
-        if (res.status === "error") throw new Error(res.error);
+        await api.updateSubscription(id, updates);
       } else {
         LocalApi.update(updatedSub);
       }
       toast({ title: "Updated", duration: 1500 });
-    } catch (e) {
+    } catch (e: any) {
       setSubscriptions(prevSubs);
-      toast({ title: "Update Failed", variant: "destructive" });
+      toast({ title: "Update Failed", description: e.message, variant: "destructive" });
     }
   };
 
   const removeSubscription = async (id: string) => {
     const prevSubs = [...subscriptions];
-    
-    // Optimistic Update
     setSubscriptions(prev => prev.filter(s => s.id !== id));
 
     try {
       if (user) {
-        const res = await RemoteApi.delete(user.id, id);
-        if (res.status === "error") throw new Error(res.error);
+        await api.deleteSubscription(id);
       } else {
         LocalApi.delete(id);
       }
       toast({ title: "Removed" });
-    } catch (e) {
+    } catch (e: any) {
       setSubscriptions(prevSubs);
-      toast({ title: "Remove Failed", variant: "destructive" });
+      toast({ title: "Remove Failed", description: e.message, variant: "destructive" });
     }
   };
 
@@ -127,16 +116,12 @@ export function useSubscriptions() {
         return;
       }
       
-      const res = await RemoteApi.importBatch(user.id, localSubs);
-      if (res.status === "success") {
-        toast({ title: "Migration Successful", description: `Moved ${res.data} subscriptions to your account.` });
-        LocalApi.clear(); // Clean up local
-        fetchSubscriptions(); // Refresh view
-      } else {
-        throw new Error(res.error);
-      }
-    } catch (e) {
-      toast({ title: "Migration Failed", description: "Please try again.", variant: "destructive" });
+      const count = await api.migrateSubscriptions(localSubs);
+      toast({ title: "Migration Successful", description: `Moved ${count} subscriptions to your account.` });
+      LocalApi.clear();
+      fetchSubscriptions();
+    } catch (e: any) {
+      toast({ title: "Migration Failed", description: e.message, variant: "destructive" });
     } finally {
       setIsSyncing(false);
     }
@@ -149,7 +134,7 @@ export function useSubscriptions() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `subcontrol_backup_${user ? 'user' : 'local'}_${new Date().toISOString().slice(0,10)}.json`;
+    link.download = `subcontrol_backup_${user ? 'cloud' : 'local'}_${new Date().toISOString().slice(0,10)}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
