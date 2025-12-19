@@ -8,17 +8,39 @@ import Dashboard from "@/pages/dashboard";
 import AddSubscription from "@/pages/add-subscription";
 import CancellationFlow from "@/pages/cancellation-flow";
 import NotFound from "@/pages/not-found";
+import AuthPage from "@/pages/auth-page";
+import { AuthProvider, ProtectedRoute } from "@/lib/auth";
 
 function Router() {
   return (
-    <Layout>
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/add" component={AddSubscription} />
-        <Route path="/cancel/:id" component={CancellationFlow} />
-        <Route component={NotFound} />
-      </Switch>
-    </Layout>
+    <Switch>
+      <Route path="/auth" component={AuthPage} />
+      <Route path="/">
+        <ProtectedRoute component={() => (
+          <Layout>
+            <Dashboard />
+          </Layout>
+        )} />
+      </Route>
+      <Route path="/add">
+        <ProtectedRoute component={() => (
+          <Layout>
+            <AddSubscription />
+          </Layout>
+        )} />
+      </Route>
+      <Route path="/cancel/:id">
+         {/* Need to wrap dynamic routes carefully with wouter+auth */}
+         {/* Using a wrapper component to handle params passing if needed, 
+             but wouter hooks inside components work fine */}
+         <ProtectedRoute component={() => (
+           <Layout>
+             <CancellationFlow />
+           </Layout>
+         )} />
+      </Route>
+      <Route component={NotFound} />
+    </Switch>
   );
 }
 
@@ -26,8 +48,10 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Router />
-        <Toaster />
+        <AuthProvider>
+          <Router />
+          <Toaster />
+        </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );
