@@ -30,11 +30,21 @@ export default function AuthPage() {
   });
 
   const onLogin = async (data: z.infer<typeof authSchema>) => {
-    await login(data.email, data.password);
+    try {
+      await login(data.email, data.password);
+    } catch (error) {
+      // Error is already handled in auth context with toast
+      console.error("Login form error:", error);
+    }
   };
 
   const onRegister = async (data: z.infer<typeof authSchema>) => {
-    await register(data.email, data.name || "User", data.password);
+    try {
+      await register(data.email, data.name || "User", data.password);
+    } catch (error) {
+      // Error is already handled in auth context with toast
+      console.error("Register form error:", error);
+    }
   };
 
   return (

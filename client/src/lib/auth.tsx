@@ -28,6 +28,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Check session on mount
     api.me().then(user => {
       if (user) setUser(user);
+    }).catch(err => {
+      console.error("Session check failed:", err);
     }).finally(() => {
       setIsLoading(false);
     });
@@ -44,12 +46,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       setLocation("/");
     } catch (error: any) {
+      console.error("Login failed:", error);
       toast({
         title: "Login failed",
-        description: error.message,
+        description: error.message || "Please check your credentials and try again.",
         variant: "destructive",
       });
-      throw error;
+      // Don't re-throw - let UI handle gracefully
     } finally {
       setIsLoading(false);
     }
@@ -66,25 +69,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       setLocation("/");
     } catch (error: any) {
+      console.error("Registration failed:", error);
+      
+      let errorMessage = error.message || "Registration failed. Please try again.";
+      
+      // Provide helpful message if it's a server error
+      if (errorMessage.includes('HTML instead of JSON')) {
+        errorMessage = "Server error occurred. Please try again or contact support.";
+      }
+      
       toast({
         title: "Registration failed",
-        description: error.message,
+        description: errorMessage,
         variant: "destructive",
       });
-      throw error;
+      // Don't re-throw - let UI handle gracefully
     } finally {
       setIsLoading(false);
     }
   };
 
   const logout = async () => {
-    await api.logout();
-    setUser(null);
-    toast({
-      title: "Logged out",
-      description: "See you next time.",
-    });
-    setLocation("/auth");
+    try {
+      await api.logout();
+      setUser(null);
+      toast({
+        title: "Logged out",
+        description: "See you next time.",
+      });
+      setLocation("/auth");
+    } catch (error) {
+      console.error("Logout failed:", error);
+      // Force logout on client even if server fails
+      setUser(null);
+      setLocation("/auth");
+    }
   };
 
   return (
