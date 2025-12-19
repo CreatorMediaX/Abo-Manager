@@ -51,7 +51,7 @@ export default function Dashboard() {
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1'];
 
-  if (loading) return <div className="p-8 text-center">Loading your financial freedom...</div>;
+  if (loading) return <div className="p-8 text-center text-muted-foreground animate-pulse">Loading your dashboard...</div>;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">

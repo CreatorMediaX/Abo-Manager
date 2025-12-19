@@ -21,9 +21,11 @@ export function useSubscriptions() {
     }
 
     try {
+      console.debug(`[SubControl] Loading subscriptions for key: ${storageKey}`);
       const stored = localStorage.getItem(storageKey);
       if (stored) {
         const parsed = JSON.parse(stored);
+        console.debug(`[SubControl] Found ${parsed.length} subscriptions in storage`);
         // Validate schema roughly, filter out invalid ones or migrate
         const validSubs = parsed.filter((item: any) => {
           const result = subscriptionSchema.safeParse(item);
@@ -46,41 +48,77 @@ export function useSubscriptions() {
   }, [storageKey]);
 
   // Save to local storage whenever subscriptions change
-  useEffect(() => {
-    if (!loading && storageKey) {
-      localStorage.setItem(storageKey, JSON.stringify(subscriptions));
-    }
-  }, [subscriptions, loading, storageKey]);
+  // Removed the useEffect for saving to avoid race conditions during unmount/navigation
+  // useEffect(() => {
+  //   if (!loading && storageKey) {
+  //     localStorage.setItem(storageKey, JSON.stringify(subscriptions));
+  //   }
+  // }, [subscriptions, loading, storageKey]);
 
   const addSubscription = (sub: Omit<Subscription, "id">) => {
-    if (!user) return;
+    if (!user || !storageKey) return;
     const newSub: Subscription = {
       ...sub,
       id: crypto.randomUUID(),
     };
-    setSubscriptions((prev) => [...prev, newSub]);
-    toast({
-      title: "Subscription added",
-      description: `${newSub.name} has been tracked.`,
-    });
+    
+    // Direct save to ensure persistence before navigation
+    try {
+      const current = JSON.parse(localStorage.getItem(storageKey) || "[]");
+      const updated = [...current, newSub];
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+      setSubscriptions(updated);
+      
+      console.debug(`[SubControl] Added subscription for user ${user.id}:`, newSub);
+      
+      toast({
+        title: "Subscription added",
+        description: `${newSub.name} has been tracked.`,
+      });
+    } catch (e) {
+      console.error("Failed to save subscription", e);
+      toast({ title: "Save failed", description: "Could not save your subscription. Please try again.", variant: "destructive" });
+    }
   };
 
   const updateSubscription = (id: string, updates: Partial<Subscription>) => {
-    if (!user) return;
-    setSubscriptions((prev) =>
-      prev.map((sub) => (sub.id === id ? { ...sub, ...updates } : sub))
-    );
-    toast({
-      title: "Subscription updated",
-    });
+    if (!user || !storageKey) return;
+    
+    try {
+      const current: Subscription[] = JSON.parse(localStorage.getItem(storageKey) || "[]");
+      const updated = current.map((sub) => (sub.id === id ? { ...sub, ...updates } : sub));
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+      setSubscriptions(updated);
+      
+      console.debug(`[SubControl] Updated subscription ${id} for user ${user.id}`);
+      
+      toast({
+        title: "Subscription updated",
+      });
+    } catch (e) {
+      console.error("Failed to update subscription", e);
+      toast({ title: "Update failed", variant: "destructive" });
+    }
   };
 
   const removeSubscription = (id: string) => {
-    if (!user) return;
-    setSubscriptions((prev) => prev.filter((sub) => sub.id !== id));
-    toast({
-      title: "Subscription removed",
-    });
+    if (!user || !storageKey) return;
+    
+    try {
+      const current: Subscription[] = JSON.parse(localStorage.getItem(storageKey) || "[]");
+      const updated = current.filter((sub) => sub.id !== id);
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+      setSubscriptions(updated);
+      
+      console.debug(`[SubControl] Removed subscription ${id} for user ${user.id}`);
+
+      toast({
+        title: "Subscription removed",
+      });
+    } catch (e) {
+      console.error("Failed to remove subscription", e);
+      toast({ title: "Remove failed", variant: "destructive" });
+    }
   };
 
   const cancelSubscription = (id: string) => {
