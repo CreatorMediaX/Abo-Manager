@@ -3,18 +3,27 @@ import { SubscriptionCard } from "@/components/SubscriptionCard";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Download, Calendar, Filter, Plus, Lightbulb, TrendingUp } from "lucide-react";
+import { Search, Download, Calendar, Filter, Plus, Lightbulb, TrendingUp, Cloud, WifiOff, RefreshCw } from "lucide-react";
 import { useState, useMemo } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { CATEGORIES } from "@/lib/types";
 import { Link } from "wouter";
 import { SmartImportDialog } from "@/components/SmartImportDialog";
 import { generateICSFile } from "@/lib/generators";
+import { useAuth } from "@/lib/auth";
+import { LocalApi } from "@/lib/api-adapter";
 
 export default function Dashboard() {
-  const { subscriptions, loading, cancelSubscription, exportData } = useSubscriptions();
+  const { user } = useAuth();
+  const { subscriptions, loading, error, isSyncing, cancelSubscription, exportData, migrateLocalToServer } = useSubscriptions();
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+
+  // Check if there are local subscriptions pending migration when logged in
+  const hasLocalData = useMemo(() => {
+    if (!user) return false;
+    return LocalApi.list().length > 0;
+  }, [user]);
 
   const filteredSubs = useMemo(() => {
     return subscriptions.filter(sub => {
@@ -35,8 +44,6 @@ export default function Dashboard() {
   }, 0);
 
   const annualSavingsPotential = activeSubs.reduce((acc, sub) => {
-     // Simple potential savings: 100% of costs if cancelled
-     // In real app, maybe only count "Entertainment" as likely savings
      return acc + (sub.interval === "yearly" ? sub.price : sub.price * 12);
   }, 0);
 
@@ -51,19 +58,55 @@ export default function Dashboard() {
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1'];
 
-  if (loading) return <div className="p-8 text-center text-muted-foreground animate-pulse">Loading your dashboard...</div>;
+  if (loading) return <div className="p-8 flex flex-col items-center justify-center min-h-[50vh] animate-in fade-in">
+    <RefreshCw className="h-8 w-8 text-primary animate-spin mb-4" />
+    <p className="text-muted-foreground">Syncing your financial data...</p>
+  </div>;
+
+  if (error) return <div className="p-8 text-center text-red-500">
+    <h3 className="text-lg font-bold">Error loading dashboard</h3>
+    <p>{error}</p>
+    <Button variant="outline" className="mt-4" onClick={() => window.location.reload()}>Retry</Button>
+  </div>;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-heading font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">Welcome back. You are tracking {subscriptions.length} subscriptions.</p>
+          <div className="flex items-center gap-2">
+            <h1 className="text-3xl font-heading font-bold tracking-tight">Dashboard</h1>
+            {user ? (
+               <div className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-500 text-xs font-medium flex items-center gap-1 border border-blue-500/20">
+                 <Cloud className="h-3 w-3" /> Cloud Sync
+               </div>
+            ) : (
+               <div className="px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-500 text-xs font-medium flex items-center gap-1 border border-orange-500/20">
+                 <WifiOff className="h-3 w-3" /> Offline Mode
+               </div>
+            )}
+          </div>
+          <p className="text-muted-foreground">
+            Welcome back, {user?.name || "Guest"}. You are tracking {subscriptions.length} subscriptions.
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+           {/* Migration Prompt */}
+           {hasLocalData && (
+             <Button 
+                variant="default" 
+                size="sm" 
+                className="bg-purple-600 hover:bg-purple-700 animate-pulse"
+                onClick={migrateLocalToServer}
+                disabled={isSyncing}
+             >
+               {isSyncing ? <RefreshCw className="mr-2 h-4 w-4 animate-spin"/> : <Cloud className="mr-2 h-4 w-4" />} 
+               {isSyncing ? "Migrating..." : "Sync Local Data"}
+             </Button>
+           )}
+           
            <SmartImportDialog />
            <Button variant="outline" size="sm" onClick={exportData}>
-            <Download className="mr-2 h-4 w-4" /> CSV
+            <Download className="mr-2 h-4 w-4" /> Backup
            </Button>
            <Button variant="outline" size="sm" onClick={() => generateICSFile(subscriptions)}>
             <Calendar className="mr-2 h-4 w-4" /> Calendar

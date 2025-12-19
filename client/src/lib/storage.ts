@@ -1,190 +1,171 @@
-import { useState, useEffect } from "react";
-import { Subscription, subscriptionSchema } from "./types";
+import { useState, useEffect, useCallback } from "react";
+import { Subscription } from "./types";
 import { toast } from "@/hooks/use-toast";
 import Papa from "papaparse";
 import { useAuth } from "@/lib/auth";
+import { LocalApi, RemoteApi } from "@/lib/api-adapter";
 
 export function useSubscriptions() {
   const { user } = useAuth();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  // Storage key now depends on user ID
-  const storageKey = user ? `subcontrol_subscriptions_${user.id}` : null;
-
-  // Load from local storage on mount or when user changes
-  useEffect(() => {
-    if (!storageKey) {
-      setSubscriptions([]);
-      setLoading(false);
-      return;
-    }
-
+  // FETCH DATA
+  const fetchSubscriptions = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      console.debug(`[SubControl] Loading subscriptions for key: ${storageKey}`);
-      const stored = localStorage.getItem(storageKey);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        console.debug(`[SubControl] Found ${parsed.length} subscriptions in storage`);
-        // Validate schema roughly, filter out invalid ones or migrate
-        const validSubs = parsed.filter((item: any) => {
-          const result = subscriptionSchema.safeParse(item);
-          return result.success;
-        });
-        setSubscriptions(validSubs);
+      if (user) {
+        // REMOTE MODE
+        const response = await RemoteApi.list(user.id);
+        if (response.status === "success" && response.data) {
+          setSubscriptions(response.data);
+        } else {
+          setError(response.error || "Failed to fetch from server");
+        }
       } else {
-        setSubscriptions([]);
+        // LOCAL MODE
+        const localData = LocalApi.list();
+        setSubscriptions(localData);
       }
     } catch (e) {
-      console.error("Failed to load subscriptions", e);
-      toast({
-        title: "Error loading data",
-        description: "Could not load your subscriptions from local storage.",
-        variant: "destructive",
-      });
+      console.error("Fetch error:", e);
+      setError("Network error occurred");
     } finally {
       setLoading(false);
     }
-  }, [storageKey]);
+  }, [user]);
 
-  // Save to local storage whenever subscriptions change
-  // Removed the useEffect for saving to avoid race conditions during unmount/navigation
-  // useEffect(() => {
-  //   if (!loading && storageKey) {
-  //     localStorage.setItem(storageKey, JSON.stringify(subscriptions));
-  //   }
-  // }, [subscriptions, loading, storageKey]);
+  // Initial load
+  useEffect(() => {
+    fetchSubscriptions();
+  }, [fetchSubscriptions]);
 
-  const addSubscription = (sub: Omit<Subscription, "id">) => {
-    if (!user || !storageKey) return;
-    const newSub: Subscription = {
-      ...sub,
-      id: crypto.randomUUID(),
-    };
+  // ACTIONS
+  const addSubscription = async (sub: Omit<Subscription, "id">) => {
+    const newSub: Subscription = { ...sub, id: crypto.randomUUID() };
     
-    // Direct save to ensure persistence before navigation
+    // Optimistic UI Update
+    const prevSubs = [...subscriptions];
+    setSubscriptions(prev => [...prev, newSub]);
+
     try {
-      const current = JSON.parse(localStorage.getItem(storageKey) || "[]");
-      const updated = [...current, newSub];
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-      setSubscriptions(updated);
-      
-      console.debug(`[SubControl] Added subscription for user ${user.id}:`, newSub);
-      
-      toast({
-        title: "Subscription added",
-        description: `${newSub.name} has been tracked.`,
-      });
+      if (user) {
+        const res = await RemoteApi.create(user.id, newSub);
+        if (res.status === "error") throw new Error(res.error);
+        toast({ title: "Saved to Cloud", description: "Subscription secure." });
+      } else {
+        LocalApi.create(newSub);
+        toast({ title: "Saved Locally", description: "Login to sync." });
+      }
     } catch (e) {
-      console.error("Failed to save subscription", e);
-      toast({ title: "Save failed", description: "Could not save your subscription. Please try again.", variant: "destructive" });
+      // Revert optimistic update
+      setSubscriptions(prevSubs);
+      toast({ title: "Save Failed", description: "Could not save subscription.", variant: "destructive" });
     }
   };
 
-  const updateSubscription = (id: string, updates: Partial<Subscription>) => {
-    if (!user || !storageKey) return;
-    
+  const updateSubscription = async (id: string, updates: Partial<Subscription>) => {
+    const prevSubs = [...subscriptions];
+    const target = subscriptions.find(s => s.id === id);
+    if (!target) return;
+
+    const updatedSub = { ...target, ...updates };
+
+    // Optimistic Update
+    setSubscriptions(prev => prev.map(s => s.id === id ? updatedSub : s));
+
     try {
-      const current: Subscription[] = JSON.parse(localStorage.getItem(storageKey) || "[]");
-      const updated = current.map((sub) => (sub.id === id ? { ...sub, ...updates } : sub));
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-      setSubscriptions(updated);
-      
-      console.debug(`[SubControl] Updated subscription ${id} for user ${user.id}`);
-      
-      toast({
-        title: "Subscription updated",
-      });
+      if (user) {
+        const res = await RemoteApi.update(user.id, updatedSub);
+        if (res.status === "error") throw new Error(res.error);
+      } else {
+        LocalApi.update(updatedSub);
+      }
+      toast({ title: "Updated", duration: 1500 });
     } catch (e) {
-      console.error("Failed to update subscription", e);
-      toast({ title: "Update failed", variant: "destructive" });
+      setSubscriptions(prevSubs);
+      toast({ title: "Update Failed", variant: "destructive" });
     }
   };
 
-  const removeSubscription = (id: string) => {
-    if (!user || !storageKey) return;
+  const removeSubscription = async (id: string) => {
+    const prevSubs = [...subscriptions];
     
-    try {
-      const current: Subscription[] = JSON.parse(localStorage.getItem(storageKey) || "[]");
-      const updated = current.filter((sub) => sub.id !== id);
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-      setSubscriptions(updated);
-      
-      console.debug(`[SubControl] Removed subscription ${id} for user ${user.id}`);
+    // Optimistic Update
+    setSubscriptions(prev => prev.filter(s => s.id !== id));
 
-      toast({
-        title: "Subscription removed",
-      });
+    try {
+      if (user) {
+        const res = await RemoteApi.delete(user.id, id);
+        if (res.status === "error") throw new Error(res.error);
+      } else {
+        LocalApi.delete(id);
+      }
+      toast({ title: "Removed" });
     } catch (e) {
-      console.error("Failed to remove subscription", e);
-      toast({ title: "Remove failed", variant: "destructive" });
+      setSubscriptions(prevSubs);
+      toast({ title: "Remove Failed", variant: "destructive" });
     }
   };
 
   const cancelSubscription = (id: string) => {
-    if (!user) return;
     const today = new Date().toISOString().split("T")[0];
     updateSubscription(id, { active: false, cancellationDate: today });
-    toast({
-      title: "Marked as cancelled",
-      description: "Great job saving money!",
-    });
   };
 
+  // MIGRATION TOOL
+  const migrateLocalToServer = async () => {
+    if (!user) return;
+    setIsSyncing(true);
+    try {
+      const localSubs = LocalApi.list();
+      if (localSubs.length === 0) {
+        toast({ title: "Nothing to migrate", description: "No local data found." });
+        return;
+      }
+      
+      const res = await RemoteApi.importBatch(user.id, localSubs);
+      if (res.status === "success") {
+        toast({ title: "Migration Successful", description: `Moved ${res.data} subscriptions to your account.` });
+        LocalApi.clear(); // Clean up local
+        fetchSubscriptions(); // Refresh view
+      } else {
+        throw new Error(res.error);
+      }
+    } catch (e) {
+      toast({ title: "Migration Failed", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // EXPORT / IMPORT TOOLS
   const exportData = () => {
-    const csv = Papa.unparse(subscriptions);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const json = JSON.stringify(subscriptions, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `subscriptions_${new Date().toISOString().split("T")[0]}.csv`);
+    link.href = url;
+    link.download = `subcontrol_backup_${user ? 'user' : 'local'}_${new Date().toISOString().slice(0,10)}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const importData = (file: File) => {
-    if (!user) return;
-    Papa.parse(file, {
-      header: true,
-      complete: (results) => {
-        try {
-          const imported = results.data
-            .map((item: any) => {
-              // Basic type conversion for CSV strings
-              return {
-                ...item,
-                price: parseFloat(item.price),
-                noticePeriodDays: parseInt(item.noticePeriodDays),
-                active: item.active === "true" || item.active === true,
-              };
-            })
-            .filter((item: any) => item.name && !isNaN(item.price)); // Basic validation
-
-          setSubscriptions((prev) => [...prev, ...imported]);
-          toast({
-            title: "Import successful",
-            description: `Imported ${imported.length} subscriptions.`,
-          });
-        } catch (e) {
-          toast({
-            title: "Import failed",
-            description: "Check your CSV format.",
-            variant: "destructive",
-          });
-        }
-      },
-    });
+    toast({ title: "Backup Created", description: "Keep this file safe." });
   };
 
   return {
     subscriptions,
     loading,
+    error,
+    isSyncing,
     addSubscription,
     updateSubscription,
     removeSubscription,
     cancelSubscription,
     exportData,
-    importData,
+    migrateLocalToServer
   };
 }
