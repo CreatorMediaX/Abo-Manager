@@ -1,10 +1,11 @@
 import { Subscription } from "@/lib/types";
 import { format, differenceInDays, parseISO } from "date-fns";
-import { Calendar, CreditCard, AlertCircle, ExternalLink } from "lucide-react";
+import { Calendar, CreditCard, AlertCircle, ExternalLink, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "wouter";
+import { PROVIDERS } from "@/data/providers";
 
 interface SubscriptionCardProps {
   subscription: Subscription;
@@ -17,14 +18,20 @@ export function SubscriptionCard({ subscription, onCancel }: SubscriptionCardPro
   
   const isUrgent = daysUntilPayment <= 7 && daysUntilPayment >= 0;
   const isOverdue = daysUntilPayment < 0;
+  
+  const provider = subscription.providerId ? PROVIDERS[subscription.providerId] : null;
 
   return (
     <Card className={`overflow-hidden transition-all hover:shadow-md border-border/50 bg-card/40 backdrop-blur-sm ${!subscription.active ? 'opacity-60 grayscale' : ''}`}>
       <CardHeader className="flex flex-row items-start justify-between pb-2">
         <div className="space-y-1">
-          <CardTitle className="font-heading text-xl">{subscription.name}</CardTitle>
+          <div className="flex items-center gap-2">
+             <CardTitle className="font-heading text-xl">{subscription.name}</CardTitle>
+             {provider && (
+               <ShieldCheck className="h-4 w-4 text-blue-400" aria-label="Verified Provider" />
+             )}
+          </div>
           <div className="text-sm text-muted-foreground flex items-center gap-1">
-            {subscription.provider && <span>{subscription.provider} • </span>}
             <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-normal uppercase tracking-wider">{subscription.category}</Badge>
           </div>
         </div>

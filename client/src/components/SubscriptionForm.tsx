@@ -1,3 +1,4 @@
+import { PROVIDERS, searchProviders } from "@/data/providers";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Subscription, subscriptionSchema, CURRENCIES, INTERVALS, PAYMENT_METHODS, CATEGORIES } from "@/lib/types";
@@ -7,7 +8,11 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
-import { CalendarIcon } from "lucide-react";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useState } from "react";
 
 interface SubscriptionFormProps {
   defaultValues?: Partial<Subscription>;
@@ -16,6 +21,8 @@ interface SubscriptionFormProps {
 }
 
 export function SubscriptionForm({ defaultValues, onSubmit, onCancel }: SubscriptionFormProps) {
+  const [openProvider, setOpenProvider] = useState(false);
+
   const form = useForm<Subscription>({
     resolver: zodResolver(subscriptionSchema.omit({ id: true })),
     defaultValues: {
@@ -29,9 +36,21 @@ export function SubscriptionForm({ defaultValues, onSubmit, onCancel }: Subscrip
       paymentMethod: "Credit Card",
       category: "Other",
       active: true,
+      providerId: undefined,
       ...defaultValues,
     } as any,
   });
+
+  const handleProviderSelect = (providerId: string) => {
+    const provider = PROVIDERS[providerId];
+    if (provider) {
+      form.setValue("providerId", provider.id);
+      form.setValue("name", provider.name);
+      form.setValue("category", provider.category);
+      // Could also set notice periods if we parsed the info text
+    }
+    setOpenProvider(false);
+  };
 
   return (
     <Form {...form}>
@@ -44,30 +63,73 @@ export function SubscriptionForm({ defaultValues, onSubmit, onCancel }: Subscrip
                   control={form.control}
                   name="name"
                   render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Subscription Name</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Netflix, Spotify, Gym..." {...field} />
-                      </FormControl>
+                    <FormItem className="flex flex-col">
+                      <FormLabel>Service / Provider</FormLabel>
+                      <Popover open={openProvider} onOpenChange={setOpenProvider}>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              className={cn(
+                                "w-full justify-between",
+                                !field.value && "text-muted-foreground"
+                              )}
+                            >
+                              {field.value || "Select provider"}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[300px] p-0">
+                          <Command>
+                            <CommandInput placeholder="Search providers..." />
+                            <CommandList>
+                              <CommandEmpty>No provider found. Type name manually.</CommandEmpty>
+                              <CommandGroup>
+                                {Object.values(PROVIDERS).map((provider) => (
+                                  <CommandItem
+                                    value={provider.name}
+                                    key={provider.id}
+                                    onSelect={() => handleProviderSelect(provider.id)}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "mr-2 h-4 w-4",
+                                        provider.id === form.getValues("providerId") ? "opacity-100" : "opacity-0"
+                                      )}
+                                    />
+                                    {provider.name}
+                                  </CommandItem>
+                                ))}
+                                <CommandItem onSelect={() => setOpenProvider(false)}>
+                                  Use custom name...
+                                </CommandItem>
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                      <FormDescription>
+                        Selecting a known provider enables cancellation wizards.
+                      </FormDescription>
+                      
+                      {/* Fallback Input if they want custom name */}
+                      <Input 
+                        placeholder="Or type custom name..." 
+                        {...field} 
+                        className="mt-2"
+                        onChange={(e) => {
+                          field.onChange(e);
+                          if (form.getValues("providerId")) form.setValue("providerId", undefined);
+                        }}
+                      />
                       <FormMessage />
                     </FormItem>
                   )}
                 />
 
                 <div className="grid grid-cols-2 gap-4">
-                   <FormField
-                    control={form.control}
-                    name="provider"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Provider (Optional)</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Company Name" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
                   <FormField
                     control={form.control}
                     name="category"
