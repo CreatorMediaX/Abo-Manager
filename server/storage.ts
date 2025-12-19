@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { db } from "../db/index";
 import { users, subscriptions, type User, type InsertUser, type Subscription, type InsertSubscription } from "@shared/schema";
 
@@ -35,7 +35,7 @@ export class DatabaseStorage implements IStorage {
 
   // SUBSCRIPTION METHODS
   async getSubscriptions(userId: string): Promise<Subscription[]> {
-    return db.select().from(subscriptions).where(eq(subscriptions.userId, userId)).orderBy(subscriptions.createdAt);
+    return db.select().from(subscriptions).where(eq(subscriptions.userId, userId)).orderBy(desc(subscriptions.createdAt));
   }
 
   async getSubscription(id: string, userId: string): Promise<Subscription | undefined> {
@@ -48,14 +48,14 @@ export class DatabaseStorage implements IStorage {
   async createSubscription(userId: string, subscription: InsertSubscription): Promise<Subscription> {
     const [created] = await db.insert(subscriptions).values({
       ...subscription,
-      userId
-    }).returning();
+      userId,
+    } as any).returning();
     return created;
   }
 
   async updateSubscription(id: string, userId: string, updates: Partial<InsertSubscription>): Promise<Subscription | undefined> {
     const [updated] = await db.update(subscriptions)
-      .set({ ...updates, updatedAt: new Date() })
+      .set({ ...updates, updatedAt: sql`NOW()` } as any)
       .where(and(eq(subscriptions.id, id), eq(subscriptions.userId, userId)))
       .returning();
     return updated;

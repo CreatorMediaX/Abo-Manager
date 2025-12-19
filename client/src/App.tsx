@@ -14,7 +14,9 @@ import { AuthProvider, ProtectedRoute } from "@/lib/auth";
 function Router() {
   return (
     <Switch>
-      <Route path="/auth" component={AuthPage} />
+      <Route path="/auth">
+        <AuthPage />
+      </Route>
       <Route path="/">
         <ProtectedRoute component={() => (
           <Layout>
@@ -30,9 +32,6 @@ function Router() {
         )} />
       </Route>
       <Route path="/cancel/:id">
-         {/* Need to wrap dynamic routes carefully with wouter+auth */}
-         {/* Using a wrapper component to handle params passing if needed, 
-             but wouter hooks inside components work fine */}
          <ProtectedRoute component={() => (
            <Layout>
              <CancellationFlow />
