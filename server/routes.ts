@@ -254,6 +254,43 @@ export async function registerRoutes(
     }
   });
 
+  // CSV IMPORT ENDPOINTS
+  app.post("/api/import/analyze", requireAuth, async (req: any, res) => {
+    try {
+      const { transactions, columnMapping } = req.body;
+      
+      if (!Array.isArray(transactions)) {
+        return res.status(400).json({ error: "Invalid data format" });
+      }
+      
+      // Store transactions in database for future re-analysis
+      const importJob = await storage.createImportJob(req.user.id, {
+        fileName: req.body.fileName || 'upload.csv',
+        status: 'processing',
+        totalRows: transactions.length,
+        columnMapping,
+      });
+      
+      res.json({ 
+        jobId: importJob.id,
+        message: `Processing ${transactions.length} transactions` 
+      });
+    } catch (error: any) {
+      console.error("[DEV] CSV analyze error:", error);
+      res.status(500).json({ error: error.message || "Analysis failed" });
+    }
+  });
+  
+  app.get("/api/import/jobs", requireAuth, async (req: any, res) => {
+    try {
+      const jobs = await storage.getImportJobs(req.user.id);
+      res.json(jobs);
+    } catch (error: any) {
+      console.error("[DEV] Get import jobs error:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch import jobs" });
+    }
+  });
+
   // MIGRATION ENDPOINT - Import local data to server
   app.post("/api/subscriptions/migrate", requireAuth, async (req: any, res) => {
     try {

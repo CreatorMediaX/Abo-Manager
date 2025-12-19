@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, jsonb, decimal } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -65,3 +65,63 @@ export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({
 
 export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
 export type Subscription = typeof subscriptions.$inferSelect;
+
+// IMPORT JOBS TABLE - Track CSV imports
+export const importJobs = pgTable("import_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  
+  fileName: text("file_name").notNull(),
+  status: text("status").notNull().default("processing"), // processing, completed, failed
+  totalRows: integer("total_rows").notNull().default(0),
+  importedCount: integer("imported_count").notNull().default(0),
+  suggestedCount: integer("suggested_count").notNull().default(0),
+  
+  columnMapping: jsonb("column_mapping").$type<{
+    date?: string;
+    description?: string;
+    amount?: string;
+    currency?: string;
+  }>(),
+  
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertImportJobSchema = createInsertSchema(importJobs).omit({ 
+  id: true, 
+  userId: true, 
+  createdAt: true 
+});
+
+export type InsertImportJob = z.infer<typeof insertImportJobSchema>;
+export type ImportJob = typeof importJobs.$inferSelect;
+
+// TRANSACTIONS TABLE - Store raw transactions for re-analysis
+export const transactions = pgTable("transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  importJobId: varchar("import_job_id").references(() => importJobs.id, { onDelete: "cascade" }),
+  
+  date: text("date").notNull(),
+  description: text("description").notNull(),
+  amount: integer("amount").notNull(), // cents
+  currency: text("currency").notNull().default("EUR"),
+  
+  normalizedMerchant: text("normalized_merchant"),
+  subscriptionId: varchar("subscription_id").references(() => subscriptions.id, { onDelete: "set null" }),
+  
+  ignored: boolean("ignored").notNull().default(false),
+  
+  rawData: jsonb("raw_data"),
+  
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertTransactionSchema = createInsertSchema(transactions).omit({ 
+  id: true, 
+  userId: true, 
+  createdAt: true 
+});
+
+export type InsertTransaction = z.infer<typeof insertTransactionSchema>;
+export type Transaction = typeof transactions.$inferSelect;
