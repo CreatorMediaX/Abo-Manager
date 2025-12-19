@@ -11,6 +11,8 @@ import { insertSubscriptionSchema } from "@shared/schema";
 import { z } from "zod";
 import { fromZodError } from "zod-validation-error";
 import pkg from "pg";
+import multer from "multer";
+import { parsePDFBuffer, extractTransactionsFromPDFText, isScannedPDF } from "./pdf-parser";
 const { Pool } = pkg;
 
 const scryptAsync = promisify(scrypt);
@@ -288,6 +290,90 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("[DEV] Get import jobs error:", error);
       res.status(500).json({ error: error.message || "Failed to fetch import jobs" });
+    }
+  });
+  
+  // PDF IMPORT ENDPOINTS
+  const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+    fileFilter: (req, file, cb) => {
+      if (file.mimetype === 'application/pdf') {
+        cb(null, true);
+      } else {
+        cb(new Error('Only PDF files are allowed'));
+      }
+    }
+  });
+  
+  app.post("/api/import/parse-pdf", requireAuth, upload.single('pdf'), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No PDF file uploaded" });
+      }
+      
+      console.log("[DEV] Parsing PDF:", req.file.originalname, "Size:", req.file.size, "bytes");
+      
+      // Parse PDF
+      const pdfData = await parsePDFBuffer(req.file.buffer);
+      const scanned = isScannedPDF(pdfData.text, pdfData.numPages);
+      
+      if (scanned) {
+        console.log("[DEV] PDF appears to be scanned (image-based)");
+        return res.json({
+          transactions: [],
+          isScanned: true,
+          rawText: pdfData.text,
+          numPages: pdfData.numPages,
+          message: "This appears to be a scanned PDF. OCR is required to extract text."
+        });
+      }
+      
+      // Extract transactions from text
+      const transactions = extractTransactionsFromPDFText(pdfData.text);
+      
+      console.log("[DEV] Extracted", transactions.length, "transactions from PDF");
+      
+      res.json({
+        transactions,
+        isScanned: false,
+        rawText: pdfData.text,
+        numPages: pdfData.numPages,
+      });
+    } catch (error: any) {
+      console.error("[DEV] PDF parse error:", error);
+      
+      // Provide user-friendly error messages
+      let errorMessage = "Failed to parse PDF";
+      if (error.message.includes('encrypted')) {
+        errorMessage = "This PDF is password-protected. Please remove the password and try again.";
+      } else if (error.message.includes('Invalid PDF')) {
+        errorMessage = "This file doesn't appear to be a valid PDF document.";
+      } else if (error.message.includes('Unsupported')) {
+        errorMessage = "This PDF format is not supported. Try exporting it from your banking app again.";
+      }
+      
+      res.status(400).json({ error: errorMessage, details: error.message });
+    }
+  });
+  
+  app.post("/api/import/ocr-pdf", requireAuth, upload.single('pdf'), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No PDF file uploaded" });
+      }
+      
+      console.log("[DEV] OCR requested for:", req.file.originalname);
+      
+      // For now, return a message that OCR is not yet implemented server-side
+      // In a full implementation, we'd use pdf2pic + tesseract here
+      res.json({
+        text: "",
+        message: "Server-side OCR is not yet implemented. Please try a text-based PDF or use a different export format."
+      });
+    } catch (error: any) {
+      console.error("[DEV] OCR error:", error);
+      res.status(500).json({ error: "OCR processing failed", details: error.message });
     }
   });
 
